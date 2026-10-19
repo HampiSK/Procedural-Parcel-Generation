@@ -1,6 +1,21 @@
-# Raylib Project Template (VS2022)
+# Procedural Parcel Generation
 
-This simple C++/raylib project sets up a Visual Studio 2022 environment with all the necessary dependencies, including automatic downloading and linking.
+An interactive 2D city editor written in C++20 with [raylib](https://www.raylib.com). Draw straight or curved roads to create parcels that are divided into blocks and road-connected lots, with only affected parcels regenerated when roads, intersections, or parcel types change.
+
+![Demo](demo.gif)
+
+## How it works
+
+1. **Road graph.** Adding a road splits every road it crosses or ends on. When a road is removed, two straight roads that continue each other become one again.
+2. **Parcels.** After every change the faces of the graph are traced again, walking from each road to the next one clockwise around the intersection it reaches. Dead ends are dropped and an outline that touches itself is split in two, so every parcel is a simple polygon. A new parcel takes the type and settings of the old parcel at its inside point.
+3. **Blocks.** A parcel longer than the largest block gets the street pattern of its type, which cuts it into blocks.
+4. **Lots.** A block is split in two along the best of several candidate lines, again and again, until its lots are small enough. The candidates are rated by how balanced the two parts are, how regular their shapes are and how much road they keep. A lot stays only while a road runs along one of its sides and none runs through it.
+## Inspired by
+
+- Zebin Chen, Peng Song and F. Peter Ortner. **Hierarchical Co-generation of Parcels and Streets in Urban Modeling.** *Computer Graphics Forum* 43(2), Eurographics 2024. [doi:10.1111/cgf.15053](https://doi.org/10.1111/cgf.15053)
+- Carlos A. Vanegas, Tom Kelly, Basil Weber, Jan Halatsch, Daniel G. Aliaga and Pascal Müller. **Procedural Generation of Parcels in Urban Modeling.** *Computer Graphics Forum* 31(2), 681–690, Eurographics 2012. [doi:10.1111/j.1467-8659.2012.03047.x](https://doi.org/10.1111/j.1467-8659.2012.03047.x)
+- Farshad Shariatpour, Amir Shakibamanesh and Morteza Rahbar. **Procedural generation as an approach for digital representation of a city.** *Computational Urban Science* 6, 31 (2026). [doi:10.1007/s43762-026-00263-8](https://doi.org/10.1007/s43762-026-00263-8)
+- Guoning Chen, Gregory Esch, Peter Wonka, Pascal Müller and Eugene Zhang. **Interactive Procedural Street Modeling.** *ACM Transactions on Graphics* 27(3), Article 103, SIGGRAPH 2008. [Project page](https://www2.cs.uh.edu/~chengu/Publications/streetModeling/street_modeling.html)
 
 ## Requirements
 - [Visual Studio 2022](https://visualstudio.com) (Not strictly required, but the included setup scripts support this version)
@@ -20,18 +35,7 @@ This simple C++/raylib project sets up a Visual Studio 2022 environment with all
 4. **Linux**
    - A Makefile will be generated.
    - Build using: `make`
-   - Executable is generated here: `Binaries/<platform>/Dev/<game_name>`
-
-## Included
-- Example Code:
-  * `/Game/Source` - Directory contains an example game implementation.
-  * `/Game/Resource`
-- `/Dependencies` directory for all game dependencies:
-  * `./Build-Dependencies.lua` - Defines the setup order of dependencies.
-  * `./Build-Raylib.lua` - Includes the game engine (`Raylib v6.0`).
-  * Additional dependencies can be added similarly.
-- A simple `.gitignore` to exclude project files and binaries.
-- Premake binaries for Windows and Linux (`Premake v5.0-beta2`).
+   - Executable is generated here: `Binaries/<platform>/Dev/PPG`
 
 ## License
 - The repository itself is licensed under the terms described in `LICENSE`.

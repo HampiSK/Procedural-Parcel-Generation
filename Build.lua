@@ -12,7 +12,7 @@ Global = {}  -- Global data container
 Link = {}    -- Used for linking other projects
 
 -- Project name
-Global.name = "Game Name"
+Global.name = "PPG"
 
 -- Static directory paths
 Global.rootDir = Utils.normalizePath(os.getcwd())
