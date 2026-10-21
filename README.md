@@ -8,6 +8,8 @@ An interactive 2D city editor written in C++20 with [raylib](https://www.raylib.
 
 The editor lets you design a city interactively by drawing and editing a connected network of straight or curved roads. The road network defines parcels, which are subdivided into city blocks and individual building lots using configurable procedural rules. Four layout styles grid, organic, radial and random, produce different street patterns and lot arrangements. Lot subdivision balances shape, size, and access to roads, while houses and their surroundings are generated to fit the available space. The system preserves parcel styles and uses deterministic generation to keep results consistent during editing. Changes to the road network or parcel settings regenerate only the affected areas, allowing the city to evolve without rebuilding everything.
 
+![Image](image.png)
+
 Each subdivision style (grid, organic, radial or random) has configurable settings defined in the `City::parcelSettings` array. See `configureParcels()` in `main.cpp` for an example of how to configure these settings.
 
 There are still many improvements (and fixes) that could be made. I may return to this project in the future to bring it to the level of polish and quality it deserves.
