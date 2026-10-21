@@ -2,24 +2,31 @@
 
 #include <array>
 #include <cfloat>
-#include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <optional>
 #include <span>
-#include <vector>
 
 #include <raylib.h>
 
 // Samples along a curved road, 16 pieces
 constexpr int CURVE_POINTS = 17;
 
+// Capacities of a city
+constexpr int MAX_NODES = 1024;
+constexpr int MAX_ROADS = 1024;
+constexpr int MAX_HALFEDGES = 2 * MAX_ROADS;
+constexpr int MAX_PARCELS = 256;
+constexpr int MAX_PARCEL_POINTS = 32768;
+constexpr int MAX_PARCEL_CORNERS = 1024;
+constexpr int MAX_PARCEL_INDICES = 3 * MAX_PARCEL_POINTS;
+constexpr int MAX_LOTS = 2048;
+constexpr int MAX_LOT_POINTS = 65536;
+constexpr int MAX_HOUSE_PROPS = 8;
+
 // The parcel types, each one cuts a parcel into blocks and lots its own way
-enum class SubdivisionStyle
+enum SubdivisionStyle
 {
-    Grid, Organic, Radial, Random
+    SubdivisionStyle_None = -1, SubdivisionStyle_Grid, SubdivisionStyle_Organic, SubdivisionStyle_Radial, SubdivisionStyle_Random, SubdivisionStyle_Count
 };
-constexpr int SUBDIVISION_STYLE_COUNT = 4;
 
 // What the end of a road is attached to: nothing, an intersection or a point along a road
 enum class AnchorKind
@@ -50,12 +57,10 @@ struct RoadAttributes
 // Where a road can start or end: a free point, an intersection or a point along a road
 struct RoadAnchor
 {
-    // The kind tells whether the node or the segment is set
+    // The kind tells whether node or road is set, t is the curve parameter along the road
     AnchorKind kind = AnchorKind::Free;
-    size_t node = 0;
-    size_t segment = 0;
-
-    // Curve parameter along the segment, from its first to its second node, and where the anchor is
+    int node = 0;
+    int road = 0;
     float t = 0.0f;
     Vector2 position = { 0.0f, 0.0f };
 };
@@ -66,134 +71,6 @@ struct Box
     Vector2 min = { FLT_MAX, FLT_MAX };
     Vector2 max = { -FLT_MAX, -FLT_MAX };
 };
-
-// One road between two intersections, with its geometry cached for drawing and hit tests
-struct RoadSegment
-{
-    // The intersections at its ends and how the road is built
-    size_t from = 0;
-    size_t to = 0;
-    RoadAttributes road;
-
-    // Samples along the middle of the road, and its outline as a strip with a left and a right point per sample
-    Polyline line;
-    std::array<Vector2, 2 * CURVE_POINTS> ribbon = {};
-    Box box;
-};
-
-// ---- Road graph
-
-// Planar graph of roads, the source of truth for the city layout. Every intersection has a road
-class RoadGraph
-{
-public:
-    // Read them freely, change them through the methods so that the cached geometry follows
-    std::vector<Vector2> nodes;
-    std::vector<RoadSegment> segments;
-
-    // Closest intersection or point along a road within the radius, intersections win, a free point when nothing is near
-    RoadAnchor Snap(Vector2 point, float radius) const;
-
-    // The intersection closest to the point within the radius, on a tie the later one
-    bool FindNode(Vector2 point, float radius, size_t &node) const;
-
-    // Closest road within reach of the point, the reach is at least half the road width
-    bool FindSegment(Vector2 point, float radius, size_t &index) const;
-
-    // Box of the intersections, or the area that is shown while there are no roads
-    Box Bounds() const;
-
-    // A road needs some length and a curve that does not cross itself, fold back or bend tighter than the road is wide
-    bool CanAddRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road) const;
-
-    // Whether a stretch of the road would be nearly parallel to a road that is there and so close that the two overlap
-    bool RunsAlongRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road) const;
-
-    // Adds the road and splits every road it crosses or ends on, false when the road is refused
-    bool AddRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road);
-
-    // An intersection can move when its roads stay valid roads that keep clear of the others, and it keeps clear of them too
-    bool CanMoveNode(size_t node, Vector2 position) const;
-
-    // Moves the intersection when it can move there, its roads follow
-    bool MoveNode(size_t node, Vector2 position);
-
-    // The roads of the intersection as they would run with it at position
-    void DrawMovedNode(size_t node, Vector2 position, Color color) const;
-
-    // Removes the segments, false when there are none. Intersections that stop being intersections go, indices change
-    bool RemoveSegments(std::vector<size_t> indices);
-
-    // Removes the roads of the generation that reach no road of another one, and with deadEnds the ones that end in nothing
-    bool RemoveHanging(unsigned generation, bool deadEnds);
-
-    // Appends the curve parameters where the line crosses roads of another generation
-    void Crossings(const Polyline &line, unsigned generation, std::vector<float> &params) const;
-
-    // Three passes merge intersections without seams: a lighter edge around every road, the roads, a dashed middle line on wide roads
-    void Draw(Box view, float worldPerPixel) const;
-
-    // Paints over one road, to preview what a click would remove
-    void DrawSegmentHighlight(size_t index, Color color) const;
-
-    // Every bounded face of the roads as a simple outline, the corners of all outlines one after another in points and the corner
-    // count of each outline in sizes. Halfedge 2s runs along segment s from its first node and 2s + 1 runs back, the face on the
-    // left of a halfedge goes on with the next road clockwise around the node it reaches
-    void TraceParcels(std::vector<Vector2> &points, std::vector<size_t> &sizes) const;
-
-private:
-    // Shorter roads are refused
-    static constexpr float MIN_ROAD_LENGTH = 1.0f;
-
-    // Intersections closer to each other than this are one
-    static constexpr float MERGE_DISTANCE = 0.5f;
-
-    // Most roads that can end at an intersection that is moved, with more it stays where it is
-    static constexpr size_t MAX_MOVED_ROADS = 16;
-
-    // Width of the widest road at each node and the number of roads there, refreshed after every change
-    std::vector<float> nodeWidth;
-    std::vector<int> nodeDegree;
-
-    // A disk as wide as the widest road of an intersection hides gaps at joins and caps dead ends, small disks get fewer corners
-    void DrawDisks(Box view, float worldPerPixel, float extra, float minRadiusPixels, Color color) const;
-
-    // The node a halfedge leaves
-    size_t Origin(size_t halfedge) const;
-
-    // The shoelace sum of the halfedges of a walk from index from to index to, over a closed walk it is the area inside
-    float WalkArea(const std::vector<size_t> &walk, size_t from, size_t to) const;
-
-    // Makes the walk around a face a simple outline: dead ends, walked out and back, go piece by piece, and of a walk that comes back to
-    // a node it passed the part with the larger area stays. The other part goes to parts, followed by its length
-    void SimplifyWalk(std::vector<size_t> &walk, std::vector<size_t> &parts) const;
-
-    // The roads of the node as they would run with it at position, their segments and the widest width, none for too many roads
-    size_t PreviewMovedNode(size_t node, Vector2 position, std::array<Polyline, MAX_MOVED_ROADS> &lines, std::array<size_t, MAX_MOVED_ROADS> &incident, float &width) const;
-
-    // The intersection at a point: one closer than the merge distance, else a new one that splits the road the point is on or stands free
-    size_t NodeAt(Vector2 point);
-
-    // Appends the segment and builds its samples, outline and box
-    void AddSegment(const RoadSegment &segment);
-
-    // Cuts a segment at t at a new intersection or at one that is already there, the segment keeps its index as the first half
-    size_t SplitSegment(size_t index, float t);
-
-    // The segment between the ends of the segment that runs along it the whole way, SIZE_MAX when there is none
-    size_t SameRoadBetween(const RoadSegment &segment) const;
-
-    // Rebuilds the samples, outline and box of a segment, a joint is offset along the bisector and sharp ones are cut off
-    void RefreshSegment(size_t index);
-
-    // Counts the roads and finds the widest one at every node, then drops the nodes no road ends at and numbers the rest again
-    void RefreshNodes();
-
-    // A node between just two straight roads alike that continue each other is not needed, the two roads become one
-    void MergeStraightRoads(size_t node);
-};
-
-// ---- City
 
 // The sizes a parcel type cuts a parcel into
 struct ParcelSettings
@@ -212,171 +89,407 @@ struct ParcelSettings
     float maxBlockSize = 125.0f;
 };
 
-// Defined in City.cpp
-struct ParcelMesh;
-struct LotShape;
-struct Street;
+// The type of a parcel and how it was generated last
+struct ParcelAttributes
+{
+    SubdivisionStyle style = SubdivisionStyle_Grid;
+    ParcelSettings settings;
 
-// Roads, the parcels between them and the lots inside the parcels
+    // The generation that generated the parcel last, all streets it made carry it. Zero for a parcel that was never generated
+    unsigned block = 0;
+
+    // The middle of the pattern it was generated in, radial streets and lots go around it
+    Vector2 center = { 0.0f, 0.0f };
+};
+
+// A road between two intersections with its samples and box
+struct Road
+{
+    int from = 0;
+    int to = 0;
+    RoadAttributes attributes;
+    Polyline line;
+    Box box;
+};
+
+// One side of a road. Halfedge 2r runs along road r from its first node and 2r + 1 runs back, the face on the left of a halfedge is a
+// parcel or the outside
+struct Halfedge
+{
+    // The next halfedge around the face, the next road clockwise around the node it reaches, and the parcel of the face, -1 outside
+    int next = 0;
+    int parcel = -1;
+
+    // The parcel on this side as it was last, so that parcels keep their type while the roads around them change
+    ParcelAttributes attributes;
+    bool hasAttributes = false;
+
+    // Set when the road is new or changed, the parcels it bounds are generated again
+    bool fresh = true;
+};
+
+// A face of the roads, with what drawing and hit tests need. Its corners follow the roads inset a little, so dead ends are slits in it
+struct Parcel
+{
+    ParcelAttributes attributes;
+
+    // One halfedge around it, and its ranges in City::parcelPoints and City::parcelIndices, three indices per triangle
+    int halfedge = 0;
+    int firstPoint = 0;
+    int pointCount = 0;
+    int firstIndex = 0;
+    int indexCount = 0;
+
+    float area = 0.0f;
+    Box box;
+    Vector2 probe = { 0.0f, 0.0f };
+
+    // Set when it is bounded by a fresh halfedge
+    bool changed = false;
+};
+
+// The things around a house
+enum PropKind
+{
+    PropKind_Tree, PropKind_Bush, PropKind_Pool, PropKind_Shed, PropKind_Car
+};
+
+// A thing around a house, trees and bushes are disks of radius halfSize.x, the others boxes turned like the house
+struct Prop
+{
+    PropKind kind = PropKind_Tree;
+    Vector2 position = { 0.0f, 0.0f };
+    Vector2 halfSize = { 0.0f, 0.0f };
+    int color = 0;
+};
+
+// One house on a lot seen from above: a box with a gable roof that faces a road, a driveway out to the middle of the road and the
+// things around it
+struct House
+{
+    // The seed it was drawn from, a lot where no house fits keeps it too
+    unsigned seed = 0;
+    bool built = false;
+
+    // The middle of the house, the direction along its front, half its width along the front and half its depth
+    Vector2 center = { 0.0f, 0.0f };
+    Vector2 axis = { 1.0f, 0.0f };
+    Vector2 halfSize = { 0.0f, 0.0f };
+    int roof = 0;
+
+    // The middle line of the driveway, without one both ends are the same
+    Vector2 drivewayStart = { 0.0f, 0.0f };
+    Vector2 drivewayEnd = { 0.0f, 0.0f };
+
+    std::array<Prop, MAX_HOUSE_PROPS> props = {};
+    int propCount = 0;
+};
+
+// A polygon inside a parcel with one house, its corners are in City::lotPoints and whether its sides run along a road in
+// City::lotStreets
+struct Lot
+{
+    int firstPoint = 0;
+    int pointCount = 0;
+    Box box;
+    Vector2 probe = { 0.0f, 0.0f };
+    House house; // Just buy a house
+};
+
+// The parcels of a block and the streets between them
+struct Selection
+{
+    std::array<int, MAX_PARCELS> parcels = {};
+    std::array<int, MAX_ROADS> roads = {};
+    int parcelCount = 0;
+    int roadCount = 0;
+};
+
+// Roads, the parcels between them and the lots inside the parcels. Read the members freely, change them through the methods
 class City
 {
 public:
-    // The roads, the parcels are the faces between them. Change them through the city so that the parcels follow
-    RoadGraph graph;
+    std::array<Vector2, MAX_NODES> nodes = {};
+    std::array<Road, MAX_ROADS> roads = {};
+    std::array<Halfedge, MAX_HALFEDGES> halfedges = {};
+    int nodeCount = 0;
+    int roadCount = 0;
 
-    // Changes whenever the parcels are rebuilt, to tell when indices of parcels are out of date. It counts over all cities, so no two
-    // cities with parcels share a version
+    // From the largest to the smallest area, so a parcel inside another one is drawn on top. Traced again after every change of the roads
+    std::array<Parcel, MAX_PARCELS> parcels = {};
+    std::array<Vector2, MAX_PARCEL_POINTS> parcelPoints = {};
+    std::array<uint16_t, MAX_PARCEL_INDICES> parcelIndices = {};
+    int parcelCount = 0;
+
+    std::array<Lot, MAX_LOTS> lots = {};
+    std::array<Vector2, MAX_LOT_POINTS> lotPoints = {};
+    std::array<bool, MAX_LOT_POINTS> lotStreets = {};
+    int lotCount = 0;
+    int lotPointCount = 0;
+
+    // Changes whenever the parcels are traced, to tell when parcel indices are out of date
     unsigned meshVersion = 0;
 
-    // Parcels that appear or change when roads are added or removed are generated like that, switching it off leaves them as they are
+    // Parcels that appear or change when roads change are generated, switching it off leaves them as they are
     bool autoGenerate = true;
 
-    // The settings of every parcel type by SubdivisionStyle, a parcel is generated with the settings of its type at that time
-    std::array<ParcelSettings, SUBDIVISION_STYLE_COUNT> parcelSettings = {};
+    // The settings of every parcel type by SubdivisionStyle, and the type of parcels that roads enclose for the first time
+    std::array<ParcelSettings, SubdivisionStyle_Count> parcelSettings = {};
+    SubdivisionStyle newParcelStyle = SubdivisionStyle_Grid;
 
-    // The type of the parcels that roads enclose for the first time
-    SubdivisionStyle newParcelStyle = SubdivisionStyle::Grid;
+    // The first capacity that something did not fit into since this was cleared, null while everything fit. What did not fit was left
+    // out, the editor shows it until the next click
+    const char *error = nullptr;
 
-    // A city without roads, it owns its parcels and is not copied
-    City();
-    ~City();
+    City() = default;
     City(const City &) = delete;
     City &operator=(const City &) = delete;
 
-    // Draws what the camera sees
-    void Draw(const Camera2D &camera) const;
+    // Closest intersection or point along a road within the radius, intersections win, a free point when nothing is near
+    RoadAnchor Snap(Vector2 point, float radius) const;
+    bool FindNode(Vector2 point, float radius, int &node) const;
 
-    // A road can be added when it is long enough, does not fold and does not run alongside another road, which sets alongRoad
+    // Closest road within reach of the point, the reach is at least half the road width
+    bool FindRoad(Vector2 point, float radius, int &road) const;
+
+    // Box of the intersections, or the area that is shown while there are no roads
+    Box Bounds() const;
+
+    // A road needs some length and a curve that does not fold or bend tighter than it is wide, and must not run along another road,
+    // which sets alongRoad
     bool CanAddRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road, bool &alongRoad) const;
 
-    // Adds the road when it can be added, the parcels it changes are generated again
+    // Adds the road, splits every road it crosses or ends on and generates the parcels it changes
     bool AddRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road);
 
-    // Moves an intersection, the parcels beside its roads are generated again
-    bool MoveNode(size_t node, Vector2 position);
+    // An intersection can move when its roads stay valid and keep clear of the others, the parcels beside them are generated again
+    bool CanMoveNode(int node, Vector2 position) const;
+    bool MoveNode(int node, Vector2 position);
 
-    // Removes the road at point, the parcels on its sides merge or go when the other side is outside. False when no road was hit
+    // Moves every intersection of the list that can move to its position, then generates the parcels beside them once. False when none
+    // moved
+    bool MoveNodes(std::span<const int> list, std::span<const Vector2> positions);
+
+    // Removes the road at point, the parcels on its sides merge. False when no road was hit
     bool RemoveRoadAt(Vector2 point, float radius);
 
-    // Gives the parcel at point, or its whole block, a type and generates it again. A whole block loses the streets it was cut up with
-    // first, so it is one parcel again. False when no parcel was hit
+    // Gives the parcel at point, or its whole block without the streets it was cut up with, a type and generates it again
     bool ApplyParcelTypeAt(Vector2 point, SubdivisionStyle style, bool wholeBlock);
 
-    // The smallest parcel that holds the point, a parcel inside another parcel wins. The index is valid until the roads change
-    bool ParcelAt(Vector2 point, size_t &index) const;
+    // Draws a house at random from the seed onto the lot, a lot where none fits gets trees and bushes
+    void BuildHouse(int lot, unsigned seed);
+
+    // The smallest parcel that holds the point, valid until the roads change
+    bool ParcelAt(Vector2 point, int &parcel) const;
+
+    // The lot that holds the point, valid until the lots change
+    bool LotAt(Vector2 point, int &lot) const;
 
     // The parcel at point, or with wholeBlock all parcels its generation cut up as far as its streets join them, and those streets
-    bool FindBlock(Vector2 point, bool wholeBlock, std::vector<size_t> &parcels, std::vector<size_t> &streets) const;
+    bool FindBlock(Vector2 point, bool wholeBlock, Selection &selection) const;
 
-    // Paints over parcels by their indices, to preview what a click would change
-    void DrawParcels(const std::vector<size_t> &shapes, Color color) const;
+    std::span<const Vector2> ParcelOutline(int parcel) const;
+    std::span<const Vector2> LotOutline(int lot) const;
+
+    void Draw(const Camera2D &camera) const;
+
+    // Previews of what a click would change
+    void DrawRoadHighlight(int road, Color color) const;
+    void DrawMovedNode(int node, Vector2 position, Color color) const;
+    void DrawSelection(const Selection &selection, Color color) const;
+    void DrawLot(int lot, Color color) const;
 
 private:
-    // The current parcels and the ones from before the last rebuild, both are empty while no road encloses anything
-    std::unique_ptr<ParcelMesh> mesh;
-    std::unique_ptr<ParcelMesh> oldMesh;
+    // Shorter roads are refused, intersections closer than the merge distance are one
+    static constexpr float MIN_ROAD_LENGTH = 1.0f;
+    static constexpr float MERGE_DISTANCE = 0.5f;
 
-    // Lots stay while a road runs along them and none through them, and the parcel around them is there. The corners of all lots
-    // are stored one after another
-    std::vector<Vector2> lotPoints;
-    std::vector<LotShape> lotShapes;
+    // Most roads that can end at an intersection that is moved
+    static constexpr int MAX_MOVED_ROADS = 16;
 
-    // The number of the next generation, the roads that are drawn have zero
+    // Width of the widest road at each node and the number of roads there
+    std::array<float, MAX_NODES> nodeWidth = {};
+    std::array<int, MAX_NODES> nodeDegree = {};
+
+    // The number of the next generation, drawn roads have zero
     unsigned nextGeneration = 1;
 
-    // The parcels on both sides of the middle of a road, false when a side has none
-    bool StreetSides(size_t street, size_t &left, size_t &right) const;
+    // Makes the message the error unless there is one, false for what did not fit
+    bool Overflow(const char *message);
 
-    // The corners of a lot
-    std::span<const Vector2> LotPoints(size_t lot) const;
+    // ---- Roads
 
-    // Builds the parcels from the roads again, a parcel takes the settings of the old parcel at its inside point
-    void BuildParcelMesh();
+    int Origin(int halfedge) const;
 
-    // Builds the parcels again after the roads changed and generates the ones that changed, the one at freed and the ones that lost lots
-    void RebuildParcels(bool withStreets, std::optional<Vector2> freed);
+    // Sample i along a halfedge, in its direction
+    Vector2 HalfedgePoint(int halfedge, int i) const;
 
-    // Generates the parcel at the point: the streets of its type when it is larger than a block, then lots in every block with the
-    // streets the lots need. All of it is marked with a new generation
+    // Adds the road and splits the roads it crosses, without tracing the parcels again. A piece inside a parcel takes its type
+    bool InsertRoad(const RoadAnchor &a, const RoadAnchor &b, const RoadAttributes &road);
+    void AppendRoad(int from, int to, const RoadAttributes &attributes);
+    void RefreshRoad(int road);
+
+    // The intersection at a point: one closer than the merge distance, else a new one that splits the road there or stands free
+    int NodeAt(Vector2 point);
+
+    // Cuts a road at t at a new intersection or one that is already there, the road keeps its index as the first half
+    int SplitRoad(int road, float t);
+
+    // Removes the roads and marks the parcels on their sides changed. Intersections that stop being intersections go, indices change
+    void RemoveRoads(std::span<const int> list);
+
+    // A node between just two straight roads alike that continue each other is not needed, the two roads become one
+    void MergeStraightRoads(int node);
+
+    // Counts the roads and finds the widest one at every node, then drops the nodes no road ends at
+    void RefreshNodes();
+
+    // Removes the roads of the generation that end in nothing or reach no road of another generation
+    void RemoveHanging(unsigned generation);
+
+    // The roads of the node as they would run with it at position, none for too many roads
+    int PreviewMovedNode(int node, Vector2 position, std::array<Polyline, MAX_MOVED_ROADS> &lines, std::array<int, MAX_MOVED_ROADS> &incident, float &width) const;
+
+    // ---- Parcels
+
+    // Links every halfedge to the next one around its face
+    void Link();
+
+    // Links the halfedges and makes every face of positive area a parcel, from the type of its halfedges
+    void Trace();
+
+    float LoopArea(int start) const;
+    int LoopOutline(int start, std::span<Vector2> out) const;
+    void MarkLoop(int start);
+    void SetAttributes(int parcel, const ParcelAttributes &attributes);
+    void ClearFresh();
+
+    // Whether the road is a street of the block between two parcels of the block
+    bool JoinsBlock(int road, unsigned block) const;
+
+    // Traces the parcels, drops the lots of the changed ones and generates them again
+    void Rebuild(bool withStreets);
+
+    // Generates the parcel at the point: the streets of its type when it is larger than a block, then lots in every block
     void GenerateAt(Vector2 point, bool withStreets);
 
-    // Generated streets become roads of the generation that join the roads they end on. They are cut where they cross another road,
-    // and the pieces outside the blocks of the generation, like inside a closed road, are left out
-    bool AddStreets(const std::vector<Street> &streets, unsigned generation);
+    // Lays the street pattern of the parcel, cut where it crosses roads, as roads of the generation
+    void AddStreets(int parcel, unsigned generation);
 
-    // Adds a lot, its corners go after the corners of all other lots
-    void AddLot(std::span<const Vector2> points);
+    // Lays a street of the generation from a to b, its ends snap to the roads there. False when it cannot be a road
+    bool LayStreet(Vector2 a, Vector2 b, RoadAttributes road, unsigned generation);
 
-    // Keeps the marked lots in their order
-    void KeepLots(const std::vector<char> &keep);
+    // Lays the pieces of the street from a to b that lie in the parcel, cut where it crosses roads, or without lay only tells whether it
+    // could. True when there is a piece in the parcel and every one can be laid
+    bool LayStreetIn(int parcel, Vector2 a, Vector2 b, const RoadAttributes &road, unsigned generation, bool lay);
 
-    // Removes the lots in the marked parcels, a lot belongs to the smallest parcel that holds its inside point
-    void RemoveLotsIn(const std::vector<char> &parcels);
+    // Merges the blocks of the generation narrower than minBlockSize into a neighbor and cuts the ones longer than maxBlockSize in two with
+    // a street, until every block fits or a round changes nothing. A long block that cannot be cut across merges too, so that the merged
+    // block can. Where the roads leave no way, a block stays long rather than a sliver
+    void FitBlocks(unsigned generation);
 
-    // Removes the lots outside every parcel and the lots that are not on a road or in their parcel any more, marks the parcels that lost lots
-    std::vector<char> PruneLots();
+    // One round of FitBlocks each, true when blocks changed. Every block merges at most once per round
+    bool MergeBlocks(unsigned generation, unsigned seed);
+    bool SplitLongBlocks(unsigned generation, unsigned seed);
 
-    // Gives a parcel new lots without streets in place of the ones it has, roads that end in it cut it first
-    void FillLots(size_t index, unsigned seed);
+    // Cuts the parcel into lots that are on a road, every lot gets a house. Organic lots can need streets, which are laid without
+    // tracing the parcels again
+    void FillLots(int parcel, unsigned seed);
+    void AddLot(std::span<const Vector2> points, std::span<const bool> streets, unsigned seed);
+
+    // Whether a road runs through the polygon
+    bool RoadThrough(std::span<const Vector2> polygon) const;
+
+    // ---- Drawing
+
+    void DrawParcel(int parcel, Color color) const;
+
+    // A disk as wide as the widest road of an intersection hides gaps at joins and caps dead ends
+    void DrawDisks(Box view, float worldPerPixel, float extra, float minRadiusPixels, Color color) const;
 };
-
-// ---- Editor
 
 // The toolbar and the tools that edit a city, the city to edit is passed in every frame
 class Editor
 {
 public:
-    // Loads the icons, so the window has to be open. The editor owns them and is not copied
     Editor();
     ~Editor();
     Editor(const Editor &) = delete;
     Editor &operator=(const Editor &) = delete;
 
-    // Previews and markers of the selected tool, handles the clicks in the world too, call inside the 2D camera mode
+    // Previews of the selected tool in the world, handles the clicks there. Call it in BeginMode2D with the camera, before Draw
     void DrawWorld(City &city, const Camera2D &camera);
 
-    // Toolbar and status line, handles the toolbar clicks too, call in screen space after DrawWorld
-    void Draw();
+    // Toolbar and status line in the window, handles the clicks on the toolbar. Call it outside of BeginMode2D, after DrawWorld
+    void Draw(const City &city);
 
 private:
-    // The buttons of the toolbar and the options above them, in the order they are shown
-    enum ButtonKind
+    // The toolbar items in the order they are shown: the buttons, then the options of the selected button's tool above them
+    enum Item
     {
-        None = -1, Road, Remove, Move, ParcelGrid, ParcelOrganic, ParcelRadial, ParcelRandom, _Button_Count
+        Item_None = -1, Item_Road, Item_Remove, Item_Move, Item_ParcelGrid, Item_ParcelOrganic, Item_ParcelRadial, Item_ParcelRandom, Item_Curved, Item_OneParcel, Item_OneLot, Item_Count
     };
-    enum OptionKind
+
+    enum class Tool
     {
-        Curved, OneParcel, _Option_Count
+        None, Road, Remove, Move, Parcel
     };
-    static_assert(ParcelRandom - ParcelGrid == (int)SubdivisionStyle::Random, "The parcel buttons follow SubdivisionStyle");
 
-    // The icons of the items, which options are on and the selected button
-    std::array<Texture2D, ButtonKind::_Button_Count> buttonIcons = {};
-    std::array<Texture2D, OptionKind::_Option_Count> optionIcons = {};
-    std::array<bool, OptionKind::_Option_Count> optionEnabled = {};
-    ButtonKind selectedButton = ButtonKind::None;
+    struct ToolbarItem
+    {
+        Tool tool = Tool::Road;
+        const char *label = "";
+        const char *iconPath = "";
+        const char *hint = "";
+        bool isOption = false;
+    };
 
-    // Written by Draw and read by DrawWorld in the next frame, the world ignores clicks while the mouse is over the toolbar
+    static constexpr ToolbarItem ITEMS[Item_Count] =
+    {
+        ToolbarItem { Tool::Road, "Road", "../Resource/road.png", "Click to start a road, snap to a road or an intersection to connect", false },
+        ToolbarItem { Tool::Remove, "Remove", "../Resource/remove.png", "Click a road to remove it", false },
+        ToolbarItem { Tool::Move, "Move", "../Resource/move.png", "Drag an intersection to move it", false },
+        ToolbarItem { Tool::Parcel, "Grid", "../Resource/grid.png", "Click a parcel to change it to a grid", false },
+        ToolbarItem { Tool::Parcel, "Organic", "../Resource/organic.png", "Click a parcel to change it to organic", false },
+        ToolbarItem { Tool::Parcel, "Radial", "../Resource/radial.png", "Click a parcel to change it to radial", false },
+        ToolbarItem { Tool::Parcel, "Random", "../Resource/random.png", "Click a parcel to change it to random", false },
+        ToolbarItem { Tool::Road, "Curved", "../Resource/curved.png", "", true },
+        ToolbarItem { Tool::Parcel, "One Parcel", "../Resource/one_parcel.png", "", true },
+        ToolbarItem { Tool::Parcel, "One Lot", "../Resource/one_lot.png", "", true },
+    };
+
+    Texture2D icons[Item_Count] = {};
+
+    Item selectedButton = Item_None;
+    Item selectedOption = Item_None;
+
+    // True while the mouse is over the toolbar, the tools ignore clicks then
     bool mouseOverToolbar = false;
 
-    // Written by DrawWorld and read by Draw in the same frame
-    const char *status = "";
+    // The tool the state below belongs to, it starts over when another tool is picked
+    Tool activeTool = Tool::None;
 
-    // Clicks done in the current action: the road start and its bend point, or 1 while an intersection is dragged
-    int step = 0;
-    RoadAnchor start;
-    Vector2 bend = { 0.0f, 0.0f };
-    size_t dragNode = 0;
+    // The road being drawn: its start, and the end of a curved road while its bend is placed
+    RoadAnchor roadStart;
+    RoadAnchor roadEnd;
+    bool hasStart = false;
+    bool hasEnd = false;
 
-    // Where the right button went down, letting it go at the same place cancels the action
+    // The intersection being dragged, -1 while none is
+    int movedNode = -1;
+
+    // Where the right button went down, a right click without dragging cancels, dragging pans the camera
     Vector2 rightPress = { 0.0f, 0.0f };
 
-    // Parcels a click would change, looked up again only when the parcel under the mouse, the option or the parcels change
-    std::vector<size_t> hoverShapes;
-    size_t hoverParcel = SIZE_MAX;
-    unsigned hoverVersion = 0;
-    bool hoverWhole = true;
+    // What the tool said in DrawWorld, Draw shows it in the status line unless the city has an error
+    const char *toolStatus = "";
 
-    // Draws one toolbar item and returns true when it was clicked
-    bool DoItem(Rectangle bounds, Rectangle iconArea, Vector2 labelPosition, Texture2D icon, int fontSize, const char *label, bool selected);
+    // Draws one toolbar item with the icon above the label or left of it, returns true when it was clicked
+    bool DrawItem(Rectangle bounds, Texture2D icon, const char *label, bool selected, bool iconAbove);
+
+    // The tools, each previews what a click would do and does it. The road and move tools tell what is wrong in status
+    void UseRoad(City &city, Vector2 mouse, float snapRadius, float worldPerPixel, bool click, const char *&status);
+    void UseRemove(City &city, Vector2 mouse, float snapRadius, bool click);
+    void UseMove(City &city, Vector2 mouse, float snapRadius, float worldPerPixel, bool click, const char *&status);
+    void UseParcel(City &city, Vector2 mouse, bool click, const char *&status);
 };
