@@ -1,15 +1,17 @@
 # Procedural Parcel Generation
 
-An interactive 2D city editor written in C++20 with [raylib](https://www.raylib.com). Draw straight or curved roads to create parcels that are divided into blocks and road-connected lots, with only affected parcels regenerated when roads, intersections, or parcel types change.
+An interactive 2D city editor written in C++20 with [raylib](https://www.raylib.com). Design city layouts by drawing roads and generating urban blocks, plots, and houses. Choose from grid-based, organic, radial, or random layouts, with automatic regeneration of affected areas whenever the road network changes.
 
 ![Demo](demo.gif)
 
 ## How it works
 
-1. **Road graph.** Adding a road splits every road it crosses or ends on. When a road is removed, two straight roads that continue each other become one again.
-2. **Parcels.** After every change the faces of the graph are traced again, walking from each road to the next one clockwise around the intersection it reaches. Dead ends are dropped and an outline that touches itself is split in two, so every parcel is a simple polygon. A new parcel takes the type and settings of the old parcel at its inside point.
-3. **Blocks.** A parcel longer than the largest block gets the street pattern of its type, which cuts it into blocks.
-4. **Lots.** A block is split in two along the best of several candidate lines, again and again, until its lots are small enough. The candidates are rated by how balanced the two parts are, how regular their shapes are and how much road they keep. A lot stays only while a road runs along one of its sides and none runs through it.
+The editor lets you design a city interactively by drawing and editing a connected network of straight or curved roads. The road network defines parcels, which are subdivided into city blocks and individual building lots using configurable procedural rules. Four layout styles grid, organic, radial and random, produce different street patterns and lot arrangements. Lot subdivision balances shape, size, and access to roads, while houses and their surroundings are generated to fit the available space. The system preserves parcel styles and uses deterministic generation to keep results consistent during editing. Changes to the road network or parcel settings regenerate only the affected areas, allowing the city to evolve without rebuilding everything.
+
+Each subdivision style (grid, organic, radial or random) has configurable settings defined in the `City::parcelSettings` array. See `configureParcels()` in `main.cpp` for an example of how to configure these settings.
+
+There are still many improvements (and fixes) that could be made. I may return to this project in the future to bring it to the level of polish and quality it deserves.
+
 ## Inspired by
 
 - Zebin Chen, Peng Song and F. Peter Ortner. **Hierarchical Co-generation of Parcels and Streets in Urban Modeling.** *Computer Graphics Forum* 43(2), Eurographics 2024. [doi:10.1111/cgf.15053](https://doi.org/10.1111/cgf.15053)
